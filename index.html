@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Midnight Pines</title>
+  <style>
+    :root {
+      --bg: #050807;
+      --panel: #0e1412;
+      --text: #e7eee9;
+      --muted: #96a69c;
+      --accent: #f5e14b;
+      --danger: #e16b6b;
+      --safe: #8fe29e;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      color: var(--text);
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(115, 150, 120, 0.1), transparent 35%),
+        radial-gradient(circle at 80% 75%, rgba(20, 80, 40, 0.14), transparent 40%),
+        linear-gradient(180deg, #030505, #060d0a 50%, #050807);
+    }
+
+    .wrap {
+      width: min(1000px, 100%);
+      display: grid;
+      gap: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.4rem, 2.4vw, 2rem);
+      letter-spacing: 0.04em;
+    }
+
+    .sub {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 0.95rem;
+    }
+
+    .hud {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .card {
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px;
+      min-height: 54px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .value {
+      margin-top: 4px;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    canvas {
+      width: 100%;
+      aspect-ratio: 5 / 3;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+      background: #08100c;
+    }
+
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-weight: 700;
+      background: var(--accent);
+      color: #2c2500;
+      cursor: pointer;
+    }
+
+    #status {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .instructions {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 12px;
+      line-height: 1.45;
+      font-size: 0.95rem;
+      color: #d8e4dc;
+    }
+
+    .instructions strong { color: #f2f6f3; }
+
+    @media (max-width: 760px) {
+      .hud { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>Midnight Pines</h1>
+      <div class="sub">Collect 4 relics, then hunt what hunts you.</div>
+    </header>
+
+    <section class="hud" aria-label="HUD">
+      <div class="card"><div class="label">Relics</div><div class="value" id="relics">0 / 4</div></div>
+      <div class="card"><div class="label">Creatures Alive</div><div class="value" id="alive">4</div></div>
+      <div class="card"><div class="label">Time</div><div class="value" id="time">0.0s</div></div>
+      <div class="card"><div class="label">State</div><div class="value" id="mode">Evade</div></div>
+      <div class="card"><div class="label">Best Win</div><div class="value" id="best">--</div></div>
+    </section>
+
+    <canvas id="game" width="1000" height="600" aria-label="Midnight Pines game"></canvas>
+
+    <section class="controls">
+      <button id="startBtn">Start / Restart</button>
+      <div id="status" aria-live="polite">Press Start to enter the woods.</div>
+    </section>
+
+    <section class="instructions">
+      <strong>How to play:</strong> Move with <strong>WASD</strong> or <strong>Arrow keys</strong>. You are the yellow survivor. 
+      The camera is zoomed in, so you must explore the forest map: navigate around tree obstacles and avoid all creatures while collecting the <strong>4 glowing relics</strong>. 
+      Once all relics are collected, your state changes to <strong>Hunt</strong>: touch creatures to eliminate them. 
+      Eliminate all 4 to win. If any creature touches you before all relics are collected, you lose.
+      <br /><br />
+      <strong>Creature AI:</strong> 
+      1) The <strong>Wanderer</strong> moves randomly and is the fastest.
+      2) The <strong>Blinker</strong> always chases you, is slowest, and teleports close if very far away.
+      3) The <strong>Stalker</strong> directly targets you and is second slowest.
+      4) The <strong>Shifter</strong> alternates between chasing and random movement.
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const relicsEl = document.getElementById('relics');
+    const aliveEl = document.getElementById('alive');
+    const timeEl = document.getElementById('time');
+    const modeEl = document.getElementById('mode');
+    const bestEl = document.getElementById('best');
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const WORLD_W = 2600;
+    const WORLD_H = 1700;
+    const CAMERA_ZOOM = 1.22;
+    const PLAYER_RADIUS = 24;
+    const RELIC_COUNT = 4;
+    const CREATURE_RADIUS = 39;
+
+    const keys = {};
+    let trees = [];
+    let fog = [];
+    let relics = [];
+    let creatures = [];
+    let groundPattern = null;
+    const textures = {
+      tree: null,
+      ground: null,
+      stalker: null,
+      blinker: null,
+      wanderer: null,
+      shifter: null,
+      player: null,
+      relics: [null, null, null, null]
+    };
+    let treeTextureReady = false;
+    let groundTextureReady = false;
+    let stalkerTextureReady = false;
+    let blinkerTextureReady = false;
+    let wandererTextureReady = false;
+    let shifterTextureReady = false;
+    let playerTextureReady = false;
+    const relicTextureReady = [false, false, false, false];
+    let player;
+    const camera = { x: 0, y: 0 };
+    let running = false;
+    let elapsed = 0;
+    let previous = 0;
+    let collectedRelics = 0;
+    let canHunt = false;
+    let gameEnded = false;
+
+    let bestWin = Number(localStorage.getItem('midnightPinesBestWin') || 0);
+    bestEl.textContent = bestWin ? `${bestWin.toFixed(1)}s` : '--';
+
+    function rand(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function distance(ax, ay, bx, by) {
+      return Math.hypot(ax - bx, ay - by);
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function createGroundPattern() {
+      const tex = document.createElement('canvas');
+      tex.width = 140;
+      tex.height = 140;
+      const tctx = tex.getContext('2d');
+
+      tctx.fillStyle = '#0b1610';
+      tctx.fillRect(0, 0, tex.width, tex.height);
+
+      for (let i = 0; i < 950; i++) {
+        const x = Math.random() * tex.width;
+        const y = Math.random() * tex.height;
+        const s = 0.6 + Math.random() * 1.2;
+        const a = 0.03 + Math.random() * 0.06;
+        tctx.fillStyle = `rgba(170, 200, 160, ${a})`;
+        tctx.fillRect(x, y, s, s);
+      }
+
+      for (let i = 0; i < 55; i++) {
+        tctx.strokeStyle = `rgba(60, 90, 65, ${0.06 + Math.random() * 0.05})`;
+        tctx.lineWidth = 0.8 + Math.random() * 1.4;
+        tctx.beginPath();
+        const x = Math.random() * tex.width;
+        const y = Math.random() * tex.height;
+        tctx.moveTo(x, y);
+        tctx.lineTo(x + rand(-20, 20), y + rand(-20, 20));
+        tctx.stroke();
+      }
+
+      return ctx.createPattern(tex, 'repeat');
+    }
+
+    function loadTextures() {
+      textures.tree = new Image();
+      textures.tree.onload = () => { treeTextureReady = true; };
+      textures.tree.onerror = () => { treeTextureReady = false; };
+      textures.tree.src = 'assets/tree.png';
+
+      textures.ground = new Image();
+      textures.ground.onload = () => {
+        groundTextureReady = true;
+        const temp = document.createElement('canvas');
+        temp.width = textures.ground.width;
+        temp.height = textures.ground.height;
+        const tctx = temp.getContext('2d');
+        tctx.drawImage(textures.ground, 0, 0);
+        groundPattern = ctx.createPattern(temp, 'repeat');
+      };
+      textures.ground.onerror = () => { groundTextureReady = false; };
+      textures.ground.src = 'assets/spookyground.png';
+
+      textures.stalker = new Image();
+      textures.stalker.onload = () => { stalkerTextureReady = true; };
+      textures.stalker.onerror = () => { stalkerTextureReady = false; };
+      textures.stalker.src = 'assets/stalkersprite.png';
+
+      textures.blinker = new Image();
+      textures.blinker.onload = () => { blinkerTextureReady = true; };
+      textures.blinker.onerror = () => { blinkerTextureReady = false; };
+      textures.blinker.src = 'assets/blinkersprite.png';
+
+      textures.wanderer = new Image();
+      textures.wanderer.onload = () => { wandererTextureReady = true; };
+      textures.wanderer.onerror = () => { wandererTextureReady = false; };
+      textures.wanderer.src = 'assets/wanderersprite.png';
+
+      textures.shifter = new Image();
+      textures.shifter.onload = () => { shifterTextureReady = true; };
+      textures.shifter.onerror = () => { shifterTextureReady = false; };
+      textures.shifter.src = 'assets/shiftersprite.png';
+
+      textures.player = new Image();
+      textures.player.onload = () => { playerTextureReady = true; };
+      textures.player.onerror = () => { playerTextureReady = false; };
+      textures.player.src = 'assets/yellowdude.png';
+
+      for (let i = 0; i < 4; i++) {
+        const img = new Image();
+        img.onload = () => { relicTextureReady[i] = true; };
+        img.onerror = () => { relicTextureReady[i] = false; };
+        img.src = `assets/relic%23${i + 1}.png`;
+        textures.relics[i] = img;
+      }
+    }
+
+    function collidesTree(x, y, radius, pad = 0) {
+      for (const t of trees) {
+        if (distance(x, y, t.x, t.y) < radius + t.blockR + pad) return true;
+      }
+      return false;
+    }
+
+    function resolveTreeCollision(entity, radius) {
+      let blocked = false;
+      for (const t of trees) {
+        const dx = entity.x - t.x;
+        const dy = entity.y - t.y;
+        const d = Math.hypot(dx, dy);
+        const minDist = radius + t.blockR;
+        if (d > 0 && d < minDist) {
+          const nx = dx / d;
+          const ny = dy / d;
+          entity.x = t.x + nx * minDist;
+          entity.y = t.y + ny * minDist;
+          blocked = true;
+        } else if (d === 0) {
+          entity.x += 0.2;
+          blocked = true;
+        }
+      }
+      entity.x = clamp(entity.x, radius, WORLD_W - radius);
+      entity.y = clamp(entity.y, radius, WORLD_H - radius);
+      return blocked;
+    }
+
+    function setupWorld() {
+      trees = [];
+      fog = [];
+      relics = [];
+      creatures = [];
+      elapsed = 0;
+      previous = 0;
+      collectedRelics = 0;
+      canHunt = false;
+      gameEnded = false;
+
+      player = {
+        x: WORLD_W / 2,
+        y: WORLD_H / 2,
+        speed: 3.2
+      };
+
+      const spawnAnchors = [
+        { x: WORLD_W / 2, y: WORLD_H / 2, r: 104 },
+        { x: WORLD_W / 2 - 260, y: WORLD_H / 2 - 180, r: 85 },
+        { x: WORLD_W / 2 + 260, y: WORLD_H / 2 + 180, r: 85 },
+        { x: WORLD_W / 2 + 250, y: WORLD_H / 2 - 180, r: 85 },
+        { x: WORLD_W / 2 - 250, y: WORLD_H / 2 + 180, r: 85 }
+      ];
+
+      let attempts = 0;
+      while (trees.length < 102 && attempts < 2400) {
+        attempts += 1;
+        const r = rand(18, 33);
+        const blockR = r * 0.56;
+        const cand = {
+          x: rand(r + 12, WORLD_W - r - 12),
+          y: rand(r + 12, WORLD_H - r - 12),
+          r,
+          blockR,
+          trunkW: r * rand(0.32, 0.42),
+          trunkH: r * rand(0.95, 1.2)
+        };
+
+        let blocked = false;
+        for (const a of spawnAnchors) {
+          if (distance(cand.x, cand.y, a.x, a.y) < cand.blockR + a.r) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+
+        for (const t of trees) {
+          if (distance(cand.x, cand.y, t.x, t.y) < cand.blockR + t.blockR + 22) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+
+        trees.push(cand);
+      }
+
+      for (let i = 0; i < 84; i++) {
+        fog.push({
+          x: rand(0, WORLD_W),
+          y: rand(0, WORLD_H),
+          r: rand(30, 80),
+          driftX: rand(-0.12, 0.12),
+          driftY: rand(-0.08, 0.08)
+        });
+      }
+
+      for (let i = 0; i < RELIC_COUNT; i++) {
+        relics.push(spawnRelic(i, relics));
+      }
+
+      const enemySpawns = [];
+      const spawnWanderer = spawnEntityPoint(enemySpawns); enemySpawns.push(spawnWanderer);
+      const spawnBlinker = spawnEntityPoint(enemySpawns); enemySpawns.push(spawnBlinker);
+      const spawnStalker = spawnEntityPoint(enemySpawns); enemySpawns.push(spawnStalker);
+      const spawnShifter = spawnEntityPoint(enemySpawns); enemySpawns.push(spawnShifter);
+
+      creatures = [
+        {
+          name: 'Wanderer',
+          type: 'random',
+          x: spawnWanderer.x,
+          y: spawnWanderer.y,
+          speed: 2.8,
+          color: '#d76767',
+          alive: true,
+          dirX: 1,
+          dirY: 0,
+          nextTurn: 0
+        },
+        {
+          name: 'Blinker',
+          type: 'teleportChaser',
+          x: spawnBlinker.x,
+          y: spawnBlinker.y,
+          speed: 1.2,
+          color: '#9e6be8',
+          alive: true,
+          teleportCooldown: 0
+        },
+        {
+          name: 'Stalker',
+          type: 'directChaser',
+          x: spawnStalker.x,
+          y: spawnStalker.y,
+          speed: 1.6,
+          color: '#67d8cf',
+          alive: true
+        },
+        {
+          name: 'Shifter',
+          type: 'alternating',
+          x: spawnShifter.x,
+          y: spawnShifter.y,
+          speed: 2.1,
+          color: '#e3a357',
+          alive: true,
+          mode: 'chase',
+          modeTimer: 0,
+          dirX: -1,
+          dirY: 0,
+          nextTurn: 0
+        }
+      ];
+
+      updateCamera();
+      setStatus('Collect relics. Do not get touched.');
+      updateHud();
+    }
+
+    function spawnRelic(slotIndex, existingRelics = []) {
+      let tries = 0;
+      while (tries < 120) {
+        tries += 1;
+        const x = rand(45, WORLD_W - 45);
+        const y = rand(45, WORLD_H - 45);
+        const farFromCenter = distance(x, y, WORLD_W / 2, WORLD_H / 2) > 360;
+        const farFromPlayer = distance(x, y, player.x, player.y) > 320;
+        const farFromOthers = existingRelics.every(r => distance(x, y, r.x, r.y) > 520);
+        if (!collidesTree(x, y, 9, 10) && farFromCenter && farFromPlayer && farFromOthers) {
+          return {
+            x,
+            y,
+            r: 9,
+            pulse: rand(0, Math.PI * 2),
+            collected: false,
+            slotIndex
+          };
+        }
+      }
+      return {
+        x: WORLD_W / 2 + rand(-700, 700),
+        y: WORLD_H / 2 + rand(-420, 420),
+        r: 9,
+        pulse: rand(0, Math.PI * 2),
+        collected: false,
+        slotIndex
+      };
+    }
+
+    function spawnEntityPoint(existingPoints = []) {
+      let tries = 0;
+      while (tries < 220) {
+        tries += 1;
+        const x = rand(55, WORLD_W - 55);
+        const y = rand(55, WORLD_H - 55);
+        const farFromPlayer = distance(x, y, player.x, player.y) > 360;
+        const farFromOthers = existingPoints.every(p => distance(x, y, p.x, p.y) > 280);
+        if (!collidesTree(x, y, CREATURE_RADIUS, 8) && farFromPlayer && farFromOthers) {
+          return { x, y };
+        }
+      }
+      return {
+        x: WORLD_W / 2 + rand(-420, 420),
+        y: WORLD_H / 2 + rand(-260, 260)
+      };
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function updateHud() {
+      relicsEl.textContent = `${collectedRelics} / ${RELIC_COUNT}`;
+      aliveEl.textContent = String(creatures.filter(c => c.alive).length);
+      timeEl.textContent = `${elapsed.toFixed(1)}s`;
+      modeEl.textContent = canHunt ? 'Hunt' : 'Evade';
+    }
+
+    function startGame() {
+      setupWorld();
+      running = true;
+      requestAnimationFrame(loop);
+    }
+
+    function endGame(message, won) {
+      running = false;
+      gameEnded = true;
+      if (won) {
+        if (!bestWin || elapsed < bestWin) {
+          bestWin = elapsed;
+          localStorage.setItem('midnightPinesBestWin', String(bestWin));
+        }
+        bestEl.textContent = `${bestWin.toFixed(1)}s`;
+      }
+      updateHud();
+      setStatus(message);
+      render(elapsed);
+    }
+
+    function movePlayer(dt) {
+      let dx = 0;
+      let dy = 0;
+      if (keys['w'] || keys['W'] || keys['ArrowUp']) dy -= 1;
+      if (keys['s'] || keys['S'] || keys['ArrowDown']) dy += 1;
+      if (keys['a'] || keys['A'] || keys['ArrowLeft']) dx -= 1;
+      if (keys['d'] || keys['D'] || keys['ArrowRight']) dx += 1;
+
+      if (dx !== 0 || dy !== 0) {
+        const len = Math.hypot(dx, dy);
+        dx /= len;
+        dy /= len;
+        player.x += dx * player.speed * dt * 60;
+        player.y += dy * player.speed * dt * 60;
+      }
+
+      player.x = clamp(player.x, PLAYER_RADIUS, WORLD_W - PLAYER_RADIUS);
+      player.y = clamp(player.y, PLAYER_RADIUS, WORLD_H - PLAYER_RADIUS);
+      resolveTreeCollision(player, PLAYER_RADIUS);
+    }
+
+    function randomMove(entity, dt) {
+      entity.nextTurn -= dt;
+      if (entity.nextTurn <= 0) {
+        const ang = rand(0, Math.PI * 2);
+        entity.dirX = Math.cos(ang);
+        entity.dirY = Math.sin(ang);
+        entity.nextTurn = rand(0.5, 1.7);
+      }
+      entity.x += entity.dirX * entity.speed * dt * 60;
+      entity.y += entity.dirY * entity.speed * dt * 60;
+
+      if (entity.x <= CREATURE_RADIUS || entity.x >= WORLD_W - CREATURE_RADIUS) {
+        entity.dirX *= -1;
+        entity.x = clamp(entity.x, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+      }
+      if (entity.y <= CREATURE_RADIUS || entity.y >= WORLD_H - CREATURE_RADIUS) {
+        entity.dirY *= -1;
+        entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+      }
+      if (resolveTreeCollision(entity, CREATURE_RADIUS)) {
+        entity.dirX *= -1;
+        entity.dirY *= -1;
+        entity.nextTurn = 0;
+      }
+    }
+
+    function chaseMove(entity, dt) {
+      let vx = player.x - entity.x;
+      let vy = player.y - entity.y;
+      for (const t of trees) {
+        const dx = entity.x - t.x;
+        const dy = entity.y - t.y;
+        const d = Math.hypot(dx, dy);
+        const avoidRange = t.blockR + 52;
+        if (d > 0 && d < avoidRange) {
+          const push = (avoidRange - d) / avoidRange;
+          vx += (dx / d) * push * 90;
+          vy += (dy / d) * push * 90;
+        }
+      }
+
+      const dist = Math.hypot(vx, vy) || 1;
+      entity.x += (vx / dist) * entity.speed * dt * 60;
+      entity.y += (vy / dist) * entity.speed * dt * 60;
+      entity.x = clamp(entity.x, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+      entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+      resolveTreeCollision(entity, CREATURE_RADIUS);
+    }
+
+    function updateCreatures(dt) {
+      for (const creature of creatures) {
+        if (!creature.alive) continue;
+
+        if (creature.type === 'random') {
+          randomMove(creature, dt);
+        } else if (creature.type === 'directChaser') {
+          chaseMove(creature, dt);
+        } else if (creature.type === 'teleportChaser') {
+          chaseMove(creature, dt);
+          creature.teleportCooldown -= dt;
+          const dist = distance(creature.x, creature.y, player.x, player.y);
+          if (dist > 560 && creature.teleportCooldown <= 0) {
+            for (let tries = 0; tries < 35; tries++) {
+              const ang = rand(0, Math.PI * 2);
+              const jumpDist = rand(130, 210);
+              const tx = clamp(player.x + Math.cos(ang) * jumpDist, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+              const ty = clamp(player.y + Math.sin(ang) * jumpDist, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+              if (!collidesTree(tx, ty, CREATURE_RADIUS, 4)) {
+                creature.x = tx;
+                creature.y = ty;
+                break;
+              }
+            }
+            creature.teleportCooldown = 6;
+            setStatus('The Blinker teleported nearby.');
+          }
+        } else if (creature.type === 'alternating') {
+          creature.modeTimer -= dt;
+          if (creature.modeTimer <= 0) {
+            creature.mode = creature.mode === 'chase' ? 'random' : 'chase';
+            creature.modeTimer = 3.5;
+          }
+          if (creature.mode === 'chase') chaseMove(creature, dt);
+          else randomMove(creature, dt);
+        }
+
+        const touched = distance(creature.x, creature.y, player.x, player.y) <= CREATURE_RADIUS + PLAYER_RADIUS;
+        if (!touched) continue;
+
+        if (!canHunt) {
+          endGame('You were caught in the woods. Press Start to try again.', false);
+          return;
+        }
+
+        creature.alive = false;
+        setStatus(`${creature.name} eliminated.`);
+      }
+    }
+
+    function updateRelics(dt) {
+      for (const relic of relics) {
+        if (relic.collected) continue;
+        relic.pulse += dt * 5;
+        const touched = distance(relic.x, relic.y, player.x, player.y) <= relic.r + PLAYER_RADIUS;
+        if (touched) {
+          relic.collected = true;
+          collectedRelics += 1;
+          if (collectedRelics === RELIC_COUNT) {
+            canHunt = true;
+            setStatus('All relics collected. Hunt the creatures.');
+          } else {
+            setStatus(`Relic found (${collectedRelics}/${RELIC_COUNT}).`);
+          }
+        }
+      }
+    }
+
+    function updateFog() {
+      for (const f of fog) {
+        f.x += f.driftX;
+        f.y += f.driftY;
+        if (f.x < -90) f.x = WORLD_W + 90;
+        if (f.x > WORLD_W + 90) f.x = -90;
+        if (f.y < -90) f.y = WORLD_H + 90;
+        if (f.y > WORLD_H + 90) f.y = -90;
+      }
+    }
+
+    function updateCamera() {
+      const viewW = W / CAMERA_ZOOM;
+      const viewH = H / CAMERA_ZOOM;
+      camera.x = clamp(player.x - viewW / 2, 0, WORLD_W - viewW);
+      camera.y = clamp(player.y - viewH / 2, 0, WORLD_H - viewH);
+    }
+
+    function update(dt) {
+      elapsed += dt;
+      movePlayer(dt);
+      updateRelics(dt);
+      updateCreatures(dt);
+      updateFog();
+      updateCamera();
+      updateHud();
+
+      const alive = creatures.filter(c => c.alive).length;
+      if (canHunt && alive === 0 && !gameEnded) {
+        endGame(`You survived and cleared the woods in ${elapsed.toFixed(1)}s.`, true);
+      }
+    }
+
+    function drawBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, WORLD_H);
+      sky.addColorStop(0, '#0a1712');
+      sky.addColorStop(1, '#040906');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+      if (groundPattern) {
+        ctx.globalAlpha = groundTextureReady ? 0.46 : 0.65;
+        ctx.fillStyle = groundPattern;
+        ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+        ctx.globalAlpha = 1;
+      }
+
+      for (const t of trees) {
+        if (treeTextureReady && textures.tree) {
+          const size = t.r * 3.1;
+          ctx.save();
+          ctx.translate(t.x, t.y);
+          ctx.rotate((t.x + t.y) * 0.0025);
+          ctx.globalAlpha = 0.88;
+          ctx.drawImage(textures.tree, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = '#2d2216';
+          ctx.fillRect(t.x - t.trunkW / 2, t.y - t.trunkH * 0.35, t.trunkW, t.trunkH);
+
+          ctx.fillStyle = 'rgba(70, 47, 31, 0.65)';
+          ctx.fillRect(t.x - 1.2, t.y - t.trunkH * 0.35, 2.4, t.trunkH);
+
+          const canopy = ctx.createRadialGradient(
+            t.x - t.r * 0.22, t.y - t.r * 0.3, t.r * 0.24,
+            t.x, t.y, t.r
+          );
+          canopy.addColorStop(0, 'rgba(35, 72, 44, 0.95)');
+          canopy.addColorStop(1, 'rgba(11, 27, 15, 0.93)');
+          ctx.fillStyle = canopy;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(70, 110, 76, 0.28)';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.blockR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      for (const f of fog) {
+        const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+        g.addColorStop(0, 'rgba(120, 140, 120, 0.08)');
+        g.addColorStop(1, 'rgba(120, 140, 120, 0.01)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawRelics() {
+      for (const relic of relics) {
+        if (relic.collected) continue;
+        const glow = 10 + Math.sin(relic.pulse) * 2;
+        ctx.fillStyle = 'rgba(244, 214, 76, 0.18)';
+        ctx.beginPath();
+        ctx.arc(relic.x, relic.y, relic.r + glow, 0, Math.PI * 2);
+        ctx.fill();
+
+        const idx = Math.max(0, Math.min(3, relic.slotIndex ?? 0));
+        if (relicTextureReady[idx] && textures.relics[idx]) {
+          const size = relic.r * 3.2;
+          ctx.save();
+          ctx.translate(relic.x, relic.y);
+          ctx.rotate(Math.sin(relic.pulse) * 0.12);
+          ctx.drawImage(textures.relics[idx], -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = '#f4d64c';
+          ctx.beginPath();
+          ctx.arc(relic.x, relic.y, relic.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawCreatures() {
+      for (const c of creatures) {
+        if (!c.alive) continue;
+        if (c.name === 'Stalker' && stalkerTextureReady && textures.stalker) {
+          const size = CREATURE_RADIUS * 2.6;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.drawImage(textures.stalker, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else if (c.name === 'Blinker' && blinkerTextureReady && textures.blinker) {
+          const size = CREATURE_RADIUS * 2.6;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.drawImage(textures.blinker, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else if (c.name === 'Wanderer' && wandererTextureReady && textures.wanderer) {
+          const size = CREATURE_RADIUS * 2.6;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.drawImage(textures.wanderer, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else if (c.name === 'Shifter' && shifterTextureReady && textures.shifter) {
+          const size = CREATURE_RADIUS * 2.6;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.drawImage(textures.shifter, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = c.color;
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, CREATURE_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#120f14';
+        ctx.beginPath();
+        ctx.arc(c.x - 4, c.y - 2, 2.3, 0, Math.PI * 2);
+        ctx.arc(c.x + 4, c.y - 2, 2.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawPlayer() {
+      if (playerTextureReady && textures.player) {
+        const size = PLAYER_RADIUS * 2.7;
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        if (canHunt) {
+          ctx.shadowColor = 'rgba(255, 229, 90, 0.45)';
+          ctx.shadowBlur = 14;
+        }
+        ctx.drawImage(textures.player, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = canHunt ? '#ffe55a' : '#f4d64c';
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#3f3400';
+        ctx.beginPath();
+        ctx.arc(player.x - 4, player.y - 2, 2.2, 0, Math.PI * 2);
+        ctx.arc(player.x + 4, player.y - 2, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawVignette() {
+      const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.18, W / 2, H / 2, H * 0.7);
+      v.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      v.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    function render() {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.scale(CAMERA_ZOOM, CAMERA_ZOOM);
+      ctx.translate(-camera.x, -camera.y);
+      drawBackground();
+      drawRelics();
+      drawCreatures();
+      drawPlayer();
+      ctx.restore();
+      drawVignette();
+    }
+
+    function loop(timestamp) {
+      if (!running) return;
+      if (!previous) previous = timestamp;
+      const dt = Math.min((timestamp - previous) / 1000, 0.05);
+      previous = timestamp;
+
+      update(dt);
+      render();
+
+      if (running) requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      if (e.key.startsWith('Arrow')) e.preventDefault();
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.key] = false;
+    });
+
+    startBtn.addEventListener('click', startGame);
+
+    groundPattern = createGroundPattern();
+    loadTextures();
+    setupWorld();
+    render();
+  </script>
+</body>
+</html>
