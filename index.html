@@ -137,6 +137,7 @@
       <div class="card"><div class="label">Creatures Alive</div><div class="value" id="alive">4</div></div>
       <div class="card"><div class="label">Time</div><div class="value" id="time">0.0s</div></div>
       <div class="card"><div class="label">State</div><div class="value" id="mode">Evade</div></div>
+      <div class="card"><div class="label">Extra Lives</div><div class="value" id="lives">0</div></div>
       <div class="card"><div class="label">Best Win</div><div class="value" id="best">--</div></div>
     </section>
 
@@ -150,14 +151,22 @@
     <section class="instructions">
       <strong>How to play:</strong> Move with <strong>WASD</strong> or <strong>Arrow keys</strong>. You are the yellow survivor. 
       The camera is zoomed in, so you must explore the forest map: navigate around tree obstacles and avoid all creatures while collecting the <strong>4 glowing relics</strong>. 
-      Once all relics are collected, your state changes to <strong>Hunt</strong>: touch creatures to eliminate them. 
-      Eliminate all 4 to win. If any creature touches you before all relics are collected, you lose.
+      <strong>Relic #1 effect:</strong> grants 1 extra life.
+      <strong>Relic #2 effect:</strong> increases your movement speed by 10%.
+      <strong>Relic #3 effect:</strong> shows arrows that point to the other relics.
+      <strong>Relic #4 effect:</strong> none yet.
+      Hidden passage: find it and press <strong>Space</strong> while standing over it to enter a basement.
+      Touch basement stairs to return to the woods. Time is paused while underground.
+      Cellar relic effect: teleports you to center, removes the first 4 enemies, and starts a fleeing Eater hunt.
+      After catching that Eater, you become the Eater in an endless mode where fleeing yellow survivors keep respawning.
+      Win condition: collect all 4 relics, then eliminate the first 4 enemies. If any creature touches you before that, you lose.
       <br /><br />
       <strong>Creature AI:</strong> 
       1) The <strong>Wanderer</strong> moves randomly and is the fastest.
       2) The <strong>Blinker</strong> always chases you, is slowest, and teleports close if very far away.
       3) The <strong>Stalker</strong> directly targets you and is second slowest.
       4) The <strong>Shifter</strong> alternates between chasing and random movement.
+      5) The <strong>Eater</strong> spawns at 1:00, phases through trees, and is invincible.
     </section>
   </main>
 
@@ -169,6 +178,7 @@
     const aliveEl = document.getElementById('alive');
     const timeEl = document.getElementById('time');
     const modeEl = document.getElementById('mode');
+    const livesEl = document.getElementById('lives');
     const bestEl = document.getElementById('best');
     const statusEl = document.getElementById('status');
     const startBtn = document.getElementById('startBtn');
@@ -178,7 +188,12 @@
     const WORLD_W = 2600;
     const WORLD_H = 1700;
     const CAMERA_ZOOM = 1.22;
+    const SPEED_MULTIPLIER = 1.2;
+    const BASEMENT_W = 900;
+    const BASEMENT_H = 560;
     const PLAYER_RADIUS = 24;
+    const YELLOW_DUDE_RADIUS = 18;
+    const TAKEOVER_START_DUDES = 16;
     const RELIC_COUNT = 4;
     const CREATURE_RADIUS = 39;
 
@@ -188,6 +203,7 @@
     let relics = [];
     let creatures = [];
     let groundPattern = null;
+    let basementFloorPattern = null;
     const textures = {
       tree: null,
       ground: null,
@@ -195,6 +211,11 @@
       blinker: null,
       wanderer: null,
       shifter: null,
+      eater: null,
+      cellar: null,
+      cellarRelic: null,
+      basementFloor: null,
+      stairs: null,
       player: null,
       relics: [null, null, null, null]
     };
@@ -204,14 +225,37 @@
     let blinkerTextureReady = false;
     let wandererTextureReady = false;
     let shifterTextureReady = false;
+    let eaterTextureReady = false;
+    let cellarTextureReady = false;
+    let cellarRelicTextureReady = false;
+    let basementFloorTextureReady = false;
+    let stairsTextureReady = false;
     let playerTextureReady = false;
     const relicTextureReady = [false, false, false, false];
     let player;
     const camera = { x: 0, y: 0 };
+    let hiddenPassage = { x: 0, y: 0, r: 34 };
+    const basement = {
+      playerX: BASEMENT_W / 2,
+      playerY: 90,
+      stairsX: BASEMENT_W / 2,
+      stairsY: BASEMENT_H - 84,
+      stairsR: 42
+    };
+    let cellarRelic = { x: BASEMENT_W / 2, y: BASEMENT_H / 2, r: 22, collected: false };
     let running = false;
     let elapsed = 0;
     let previous = 0;
     let collectedRelics = 0;
+    let extraLives = 0;
+    let relicCompassUnlocked = false;
+    let eaterSpawned = false;
+    let cellarEndgameActive = false;
+    let eaterTakeoverActive = false;
+    let yellowDudes = [];
+    let eatenYellowDudes = 0;
+    let inBasement = false;
+    let interactPressed = false;
     let canHunt = false;
     let gameEnded = false;
 
@@ -301,6 +345,39 @@
       textures.shifter.onerror = () => { shifterTextureReady = false; };
       textures.shifter.src = 'assets/shiftersprite.png';
 
+      textures.eater = new Image();
+      textures.eater.onload = () => { eaterTextureReady = true; };
+      textures.eater.onerror = () => { eaterTextureReady = false; };
+      textures.eater.src = 'assets/eatersprite.png';
+
+      textures.cellar = new Image();
+      textures.cellar.onload = () => { cellarTextureReady = true; };
+      textures.cellar.onerror = () => { cellarTextureReady = false; };
+      textures.cellar.src = 'assets/woodscellar.png';
+
+      textures.cellarRelic = new Image();
+      textures.cellarRelic.onload = () => { cellarRelicTextureReady = true; };
+      textures.cellarRelic.onerror = () => { cellarRelicTextureReady = false; };
+      textures.cellarRelic.src = 'assets/cellarrelic.png';
+
+      textures.basementFloor = new Image();
+      textures.basementFloor.onload = () => {
+        basementFloorTextureReady = true;
+        const temp = document.createElement('canvas');
+        temp.width = textures.basementFloor.width;
+        temp.height = textures.basementFloor.height;
+        const tctx = temp.getContext('2d');
+        tctx.drawImage(textures.basementFloor, 0, 0);
+        basementFloorPattern = ctx.createPattern(temp, 'repeat');
+      };
+      textures.basementFloor.onerror = () => { basementFloorTextureReady = false; };
+      textures.basementFloor.src = 'assets/basementfloorwoods.png';
+
+      textures.stairs = new Image();
+      textures.stairs.onload = () => { stairsTextureReady = true; };
+      textures.stairs.onerror = () => { stairsTextureReady = false; };
+      textures.stairs.src = 'assets/woodsstairs.png';
+
       textures.player = new Image();
       textures.player.onload = () => { playerTextureReady = true; };
       textures.player.onerror = () => { playerTextureReady = false; };
@@ -353,13 +430,23 @@
       elapsed = 0;
       previous = 0;
       collectedRelics = 0;
+      extraLives = 0;
+      relicCompassUnlocked = false;
+      eaterSpawned = false;
+      cellarEndgameActive = false;
+      eaterTakeoverActive = false;
+      yellowDudes = [];
+      eatenYellowDudes = 0;
+      inBasement = false;
+      interactPressed = false;
+      cellarRelic = { x: BASEMENT_W / 2, y: BASEMENT_H / 2, r: 22, collected: false };
       canHunt = false;
       gameEnded = false;
 
       player = {
         x: WORLD_W / 2,
         y: WORLD_H / 2,
-        speed: 3.2
+        speed: 3.2 * SPEED_MULTIPLIER
       };
 
       const spawnAnchors = [
@@ -417,6 +504,7 @@
       for (let i = 0; i < RELIC_COUNT; i++) {
         relics.push(spawnRelic(i, relics));
       }
+      spawnHiddenPassage();
 
       const enemySpawns = [];
       const spawnWanderer = spawnEntityPoint(enemySpawns); enemySpawns.push(spawnWanderer);
@@ -430,7 +518,7 @@
           type: 'random',
           x: spawnWanderer.x,
           y: spawnWanderer.y,
-          speed: 2.8,
+          speed: 2.8 * SPEED_MULTIPLIER,
           color: '#d76767',
           alive: true,
           dirX: 1,
@@ -442,7 +530,7 @@
           type: 'teleportChaser',
           x: spawnBlinker.x,
           y: spawnBlinker.y,
-          speed: 1.2,
+          speed: 1.2 * SPEED_MULTIPLIER,
           color: '#9e6be8',
           alive: true,
           teleportCooldown: 0
@@ -452,16 +540,18 @@
           type: 'directChaser',
           x: spawnStalker.x,
           y: spawnStalker.y,
-          speed: 1.6,
+          speed: 1.6 * SPEED_MULTIPLIER,
           color: '#67d8cf',
-          alive: true
+          alive: true,
+          sidestepSign: Math.random() < 0.5 ? -1 : 1,
+          sidestepTimer: 0
         },
         {
           name: 'Shifter',
           type: 'alternating',
           x: spawnShifter.x,
           y: spawnShifter.y,
-          speed: 2.1,
+          speed: 2.1 * SPEED_MULTIPLIER,
           color: '#e3a357',
           alive: true,
           mode: 'chase',
@@ -475,6 +565,15 @@
       updateCamera();
       setStatus('Collect relics. Do not get touched.');
       updateHud();
+    }
+
+    function spawnHiddenPassage() {
+      hiddenPassage.x = WORLD_W - 120;
+      hiddenPassage.y = 120;
+      // Keep the entrance reachable by clearing trees around the fixed cellar location.
+      trees = trees.filter(
+        t => distance(t.x, t.y, hiddenPassage.x, hiddenPassage.y) > t.blockR + hiddenPassage.r + 56
+      );
     }
 
     function spawnRelic(slotIndex, existingRelics = []) {
@@ -529,11 +628,85 @@
       statusEl.textContent = text;
     }
 
+    function spawnEater(fleeing = false) {
+      let tries = 0;
+      let x = WORLD_W * 0.1;
+      let y = WORLD_H * 0.1;
+      while (tries < 120) {
+        tries += 1;
+        x = rand(65, WORLD_W - 65);
+        y = rand(65, WORLD_H - 65);
+        if (distance(x, y, player.x, player.y) > 520) break;
+      }
+      creatures.push({
+        name: 'Eater',
+        type: fleeing ? 'eaterFlee' : 'eater',
+        x,
+        y,
+        speed: player.speed * 0.92,
+        color: '#8f1f1f',
+        alive: true,
+        invincible: !fleeing
+      });
+      eaterSpawned = true;
+      setStatus(
+        fleeing
+          ? 'The Eater has appeared and now flees from you.'
+          : 'A new presence enters the woods: the Eater.'
+      );
+    }
+
+    function spawnYellowDude(existing = []) {
+      let tries = 0;
+      while (tries < 220) {
+        tries += 1;
+        const x = rand(55, WORLD_W - 55);
+        const y = rand(55, WORLD_H - 55);
+        const farFromPlayer = distance(x, y, player.x, player.y) > 340;
+        const farFromOthers = existing.every(d => distance(x, y, d.x, d.y) > 120);
+        if (!collidesTree(x, y, YELLOW_DUDE_RADIUS, 6) && farFromPlayer && farFromOthers) {
+          return {
+            x,
+            y,
+            speed: player.speed * 0.84,
+            sidestepSign: Math.random() < 0.5 ? -1 : 1,
+            sidestepTimer: 0
+          };
+        }
+      }
+      return {
+        x: WORLD_W / 2 + rand(-680, 680),
+        y: WORLD_H / 2 + rand(-430, 430),
+        speed: player.speed * 0.84,
+        sidestepSign: Math.random() < 0.5 ? -1 : 1,
+        sidestepTimer: 0
+      };
+    }
+
+    function beginEaterTakeover() {
+      eaterTakeoverActive = true;
+      canHunt = false;
+      creatures = [];
+      player.x = WORLD_W / 2;
+      player.y = WORLD_H / 2;
+      player.speed = Math.max(player.speed, 3.2 * SPEED_MULTIPLIER * 1.14);
+      yellowDudes = [];
+      eatenYellowDudes = 0;
+      for (let i = 0; i < TAKEOVER_START_DUDES; i++) {
+        yellowDudes.push(spawnYellowDude(yellowDudes));
+      }
+      updateCamera();
+      setStatus('You became the Eater. The yellow survivors now flee forever.');
+    }
+
     function updateHud() {
       relicsEl.textContent = `${collectedRelics} / ${RELIC_COUNT}`;
-      aliveEl.textContent = String(creatures.filter(c => c.alive).length);
+      aliveEl.textContent = eaterTakeoverActive
+        ? String(yellowDudes.length)
+        : String(creatures.filter(c => c.alive).length);
       timeEl.textContent = `${elapsed.toFixed(1)}s`;
-      modeEl.textContent = canHunt ? 'Hunt' : 'Evade';
+      modeEl.textContent = inBasement ? 'Basement' : (eaterTakeoverActive ? 'Eater' : (canHunt ? 'Hunt' : 'Evade'));
+      livesEl.textContent = String(extraLives);
     }
 
     function startGame() {
@@ -578,6 +751,64 @@
       resolveTreeCollision(player, PLAYER_RADIUS);
     }
 
+    function moveBasementPlayer(dt) {
+      let dx = 0;
+      let dy = 0;
+      if (keys['w'] || keys['W'] || keys['ArrowUp']) dy -= 1;
+      if (keys['s'] || keys['S'] || keys['ArrowDown']) dy += 1;
+      if (keys['a'] || keys['A'] || keys['ArrowLeft']) dx -= 1;
+      if (keys['d'] || keys['D'] || keys['ArrowRight']) dx += 1;
+
+      if (dx !== 0 || dy !== 0) {
+        const len = Math.hypot(dx, dy);
+        dx /= len;
+        dy /= len;
+        basement.playerX += dx * player.speed * dt * 60;
+        basement.playerY += dy * player.speed * dt * 60;
+      }
+
+      basement.playerX = clamp(basement.playerX, PLAYER_RADIUS + 18, BASEMENT_W - PLAYER_RADIUS - 18);
+      basement.playerY = clamp(basement.playerY, PLAYER_RADIUS + 18, BASEMENT_H - PLAYER_RADIUS - 18);
+    }
+
+    function updateCellarRelicPickup() {
+      if (cellarRelic.collected) return;
+      const touched =
+        distance(basement.playerX, basement.playerY, cellarRelic.x, cellarRelic.y) <=
+        PLAYER_RADIUS + cellarRelic.r;
+      if (!touched) return;
+      cellarRelic.collected = true;
+      inBasement = false;
+      cellarEndgameActive = true;
+      eaterSpawned = false;
+      canHunt = false;
+      creatures = [];
+      player.x = WORLD_W / 2;
+      player.y = WORLD_H / 2;
+      updateCamera();
+      spawnEater(true);
+      setStatus('Cellar relic activated: the first 4 creatures are gone. Hunt the fleeing Eater.');
+      updateHud();
+    }
+
+    function enterBasement() {
+      inBasement = true;
+      basement.playerX = BASEMENT_W / 2;
+      basement.playerY = 96;
+      setStatus('You slipped into a hidden basement. Time above is frozen.');
+      updateHud();
+    }
+
+    function leaveBasement() {
+      inBasement = false;
+      player.x = clamp(hiddenPassage.x + rand(-90, 90), PLAYER_RADIUS, WORLD_W - PLAYER_RADIUS);
+      player.y = clamp(hiddenPassage.y + rand(80, 130), PLAYER_RADIUS, WORLD_H - PLAYER_RADIUS);
+      resolveTreeCollision(player, PLAYER_RADIUS);
+      updateCamera();
+      setStatus('You climbed back to the woods.');
+      updateHud();
+    }
+
     function randomMove(entity, dt) {
       entity.nextTurn -= dt;
       if (entity.nextTurn <= 0) {
@@ -586,6 +817,26 @@
         entity.dirY = Math.sin(ang);
         entity.nextTurn = rand(0.5, 1.7);
       }
+
+      const probeStep = CREATURE_RADIUS * 1.9;
+      const probeX = entity.x + entity.dirX * probeStep;
+      const probeY = entity.y + entity.dirY * probeStep;
+      if (collidesTree(probeX, probeY, CREATURE_RADIUS, 3)) {
+        for (let i = 0; i < 8; i++) {
+          const ang = rand(0, Math.PI * 2);
+          const nx = Math.cos(ang);
+          const ny = Math.sin(ang);
+          const tx = entity.x + nx * probeStep;
+          const ty = entity.y + ny * probeStep;
+          if (!collidesTree(tx, ty, CREATURE_RADIUS, 3)) {
+            entity.dirX = nx;
+            entity.dirY = ny;
+            break;
+          }
+        }
+        entity.nextTurn = rand(0.35, 0.8);
+      }
+
       entity.x += entity.dirX * entity.speed * dt * 60;
       entity.y += entity.dirY * entity.speed * dt * 60;
 
@@ -598,33 +849,200 @@
         entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
       }
       if (resolveTreeCollision(entity, CREATURE_RADIUS)) {
-        entity.dirX *= -1;
-        entity.dirY *= -1;
+        const ang = rand(0, Math.PI * 2);
+        entity.dirX = Math.cos(ang);
+        entity.dirY = Math.sin(ang);
         entity.nextTurn = 0;
       }
     }
 
-    function chaseMove(entity, dt) {
-      let vx = player.x - entity.x;
-      let vy = player.y - entity.y;
+    function treeAwareChaseMove(entity, dt, options = {}) {
+      const lookAheadMul = options.lookAheadMul ?? 2.3;
+      const lateralGain = options.lateralGain ?? 1.15;
+      const pushGain = options.pushGain ?? 1.55;
+      const avoidPad = options.avoidPad ?? 34;
+
+      if (entity.sidestepSign === undefined) entity.sidestepSign = Math.random() < 0.5 ? -1 : 1;
+      if (entity.sidestepTimer === undefined) entity.sidestepTimer = 0;
+
+      let toPlayerX = player.x - entity.x;
+      let toPlayerY = player.y - entity.y;
+      const toPlayerDist = Math.hypot(toPlayerX, toPlayerY) || 1;
+      toPlayerX /= toPlayerDist;
+      toPlayerY /= toPlayerDist;
+
+      entity.sidestepTimer = Math.max(0, entity.sidestepTimer - dt);
+      let steerX = toPlayerX;
+      let steerY = toPlayerY;
+
+      const lookAhead = CREATURE_RADIUS * lookAheadMul;
+      const probeX = entity.x + toPlayerX * lookAhead;
+      const probeY = entity.y + toPlayerY * lookAhead;
+      const blockedAhead = collidesTree(probeX, probeY, CREATURE_RADIUS, 4);
+
+      if (blockedAhead) {
+        if (entity.sidestepTimer <= 0) {
+          entity.sidestepSign = Math.random() < 0.5 ? -1 : 1;
+          entity.sidestepTimer = 0.65 + Math.random() * 0.5;
+        }
+        steerX = toPlayerX + (-toPlayerY * entity.sidestepSign) * lateralGain;
+        steerY = toPlayerY + (toPlayerX * entity.sidestepSign) * lateralGain;
+      }
+
       for (const t of trees) {
         const dx = entity.x - t.x;
         const dy = entity.y - t.y;
         const d = Math.hypot(dx, dy);
-        const avoidRange = t.blockR + 52;
+        const avoidRange = t.blockR + CREATURE_RADIUS + avoidPad;
         if (d > 0 && d < avoidRange) {
           const push = (avoidRange - d) / avoidRange;
-          vx += (dx / d) * push * 90;
-          vy += (dy / d) * push * 90;
+          steerX += (dx / d) * push * pushGain;
+          steerY += (dy / d) * push * pushGain;
         }
       }
 
-      const dist = Math.hypot(vx, vy) || 1;
-      entity.x += (vx / dist) * entity.speed * dt * 60;
-      entity.y += (vy / dist) * entity.speed * dt * 60;
+      const mag = Math.hypot(steerX, steerY) || 1;
+      entity.x += (steerX / mag) * entity.speed * dt * 60;
+      entity.y += (steerY / mag) * entity.speed * dt * 60;
       entity.x = clamp(entity.x, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
       entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
-      resolveTreeCollision(entity, CREATURE_RADIUS);
+
+      if (resolveTreeCollision(entity, CREATURE_RADIUS)) {
+        entity.sidestepSign *= -1;
+        entity.sidestepTimer = 0.85;
+      }
+    }
+
+    function chaseMove(entity, dt) {
+      treeAwareChaseMove(entity, dt, {
+        lookAheadMul: 2.15,
+        lateralGain: 1.1,
+        pushGain: 1.45,
+        avoidPad: 30
+      });
+    }
+
+    function stalkerMove(entity, dt) {
+      treeAwareChaseMove(entity, dt, {
+        lookAheadMul: 2.6,
+        lateralGain: 1.35,
+        pushGain: 1.8,
+        avoidPad: 40
+      });
+    }
+
+    function eaterMove(entity, dt) {
+      const dx = player.x - entity.x;
+      const dy = player.y - entity.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      entity.x += (dx / dist) * entity.speed * dt * 60;
+      entity.y += (dy / dist) * entity.speed * dt * 60;
+      entity.x = clamp(entity.x, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+      entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+      // Eater phases through trees: no obstacle avoidance/collision resolution.
+    }
+
+    function addWallAvoidance(x, y, radius, steerX, steerY, margin = 86, gain = 2.2) {
+      const left = x - radius;
+      const right = WORLD_W - (x + radius);
+      const top = y - radius;
+      const bottom = WORLD_H - (y + radius);
+
+      if (left < margin) steerX += ((margin - left) / margin) * gain;
+      if (right < margin) steerX -= ((margin - right) / margin) * gain;
+      if (top < margin) steerY += ((margin - top) / margin) * gain;
+      if (bottom < margin) steerY -= ((margin - bottom) / margin) * gain;
+
+      return { steerX, steerY };
+    }
+
+    function cornerEscapeNudge(entity, radius, amount = 2.6) {
+      const nearLeft = entity.x - radius < 10;
+      const nearRight = WORLD_W - (entity.x + radius) < 10;
+      const nearTop = entity.y - radius < 10;
+      const nearBottom = WORLD_H - (entity.y + radius) < 10;
+      if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
+        const cx = WORLD_W / 2 - entity.x;
+        const cy = WORLD_H / 2 - entity.y;
+        const mag = Math.hypot(cx, cy) || 1;
+        entity.x += (cx / mag) * amount;
+        entity.y += (cy / mag) * amount;
+      }
+    }
+
+    function eaterFleeMove(entity, dt) {
+      let dx = entity.x - player.x;
+      let dy = entity.y - player.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      dx /= dist;
+      dy /= dist;
+      const jitter = Math.sin(elapsed * 4.2 + entity.x * 0.01) * 0.2;
+      let steerX = dx + (-dy * jitter);
+      let steerY = dy + (dx * jitter);
+      ({ steerX, steerY } = addWallAvoidance(entity.x, entity.y, CREATURE_RADIUS, steerX, steerY, 110, 3.4));
+      const mag = Math.hypot(steerX, steerY) || 1;
+      entity.x += (steerX / mag) * entity.speed * dt * 60;
+      entity.y += (steerY / mag) * entity.speed * dt * 60;
+      entity.x = clamp(entity.x, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+      entity.y = clamp(entity.y, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+      cornerEscapeNudge(entity, CREATURE_RADIUS, 3.4);
+      // Fleeing Eater also phases through trees.
+    }
+
+    function updateYellowDudes(dt) {
+      for (let i = yellowDudes.length - 1; i >= 0; i--) {
+        const d = yellowDudes[i];
+        d.sidestepTimer = Math.max(0, (d.sidestepTimer || 0) - dt);
+
+        let awayX = d.x - player.x;
+        let awayY = d.y - player.y;
+        const awayDist = Math.hypot(awayX, awayY) || 1;
+        awayX /= awayDist;
+        awayY /= awayDist;
+
+        let steerX = awayX;
+        let steerY = awayY;
+        const lookAhead = YELLOW_DUDE_RADIUS * 2.1;
+        const probeX = d.x + awayX * lookAhead;
+        const probeY = d.y + awayY * lookAhead;
+        if (collidesTree(probeX, probeY, YELLOW_DUDE_RADIUS, 3)) {
+          if (d.sidestepTimer <= 0) {
+            d.sidestepSign = Math.random() < 0.5 ? -1 : 1;
+            d.sidestepTimer = 0.55 + Math.random() * 0.5;
+          }
+          steerX = awayX + (-awayY * d.sidestepSign) * 1.2;
+          steerY = awayY + (awayX * d.sidestepSign) * 1.2;
+        }
+
+        for (const t of trees) {
+          const dx = d.x - t.x;
+          const dy = d.y - t.y;
+          const dist = Math.hypot(dx, dy);
+          const avoidRange = t.blockR + YELLOW_DUDE_RADIUS + 30;
+          if (dist > 0 && dist < avoidRange) {
+            const push = (avoidRange - dist) / avoidRange;
+            steerX += (dx / dist) * push * 1.3;
+            steerY += (dy / dist) * push * 1.3;
+          }
+        }
+
+        ({ steerX, steerY } = addWallAvoidance(d.x, d.y, YELLOW_DUDE_RADIUS, steerX, steerY, 78, 2.6));
+
+        const mag = Math.hypot(steerX, steerY) || 1;
+        d.x += (steerX / mag) * d.speed * dt * 60;
+        d.y += (steerY / mag) * d.speed * dt * 60;
+        d.x = clamp(d.x, YELLOW_DUDE_RADIUS, WORLD_W - YELLOW_DUDE_RADIUS);
+        d.y = clamp(d.y, YELLOW_DUDE_RADIUS, WORLD_H - YELLOW_DUDE_RADIUS);
+        resolveTreeCollision(d, YELLOW_DUDE_RADIUS);
+        cornerEscapeNudge(d, YELLOW_DUDE_RADIUS, 2.4);
+
+        const eaten = distance(d.x, d.y, player.x, player.y) <= YELLOW_DUDE_RADIUS + PLAYER_RADIUS;
+        if (!eaten) continue;
+        yellowDudes.splice(i, 1);
+        eatenYellowDudes += 1;
+        yellowDudes.push(spawnYellowDude(yellowDudes));
+        setStatus(`Consumed a survivor. Total eaten: ${eatenYellowDudes}.`);
+      }
     }
 
     function updateCreatures(dt) {
@@ -634,7 +1052,12 @@
         if (creature.type === 'random') {
           randomMove(creature, dt);
         } else if (creature.type === 'directChaser') {
-          chaseMove(creature, dt);
+          if (creature.name === 'Stalker') stalkerMove(creature, dt);
+          else chaseMove(creature, dt);
+        } else if (creature.type === 'eater') {
+          eaterMove(creature, dt);
+        } else if (creature.type === 'eaterFlee') {
+          eaterFleeMove(creature, dt);
         } else if (creature.type === 'teleportChaser') {
           chaseMove(creature, dt);
           creature.teleportCooldown -= dt;
@@ -667,8 +1090,30 @@
         const touched = distance(creature.x, creature.y, player.x, player.y) <= CREATURE_RADIUS + PLAYER_RADIUS;
         if (!touched) continue;
 
+        if (creature.type === 'eaterFlee') {
+          creature.alive = false;
+          beginEaterTakeover();
+          return;
+        }
+
         if (!canHunt) {
+          if (extraLives > 0) {
+            extraLives -= 1;
+            creature.sidestepSign = Math.random() < 0.5 ? -1 : 1;
+            creature.sidestepTimer = 0.8;
+            creature.x = clamp(creature.x + (Math.random() < 0.5 ? -1 : 1) * 120, CREATURE_RADIUS, WORLD_W - CREATURE_RADIUS);
+            creature.y = clamp(creature.y + (Math.random() < 0.5 ? -1 : 1) * 120, CREATURE_RADIUS, WORLD_H - CREATURE_RADIUS);
+            resolveTreeCollision(creature, CREATURE_RADIUS);
+            setStatus(`Extra life used. Lives left: ${extraLives}.`);
+            updateHud();
+            continue;
+          }
           endGame('You were caught in the woods. Press Start to try again.', false);
+          return;
+        }
+
+        if (creature.invincible) {
+          endGame('The Eater cannot be stopped. Press Start to try again.', false);
           return;
         }
 
@@ -685,10 +1130,20 @@
         if (touched) {
           relic.collected = true;
           collectedRelics += 1;
+          if (relic.slotIndex === 0) {
+            extraLives += 1;
+            setStatus(`Relic #1 found: +1 extra life (${extraLives} total).`);
+          } else if (relic.slotIndex === 1) {
+            player.speed *= 1.1;
+            setStatus(`Relic #2 found: speed increased to ${player.speed.toFixed(2)}.`);
+          } else if (relic.slotIndex === 2) {
+            relicCompassUnlocked = true;
+            setStatus('Relic #3 found: relic tracker arrows activated.');
+          }
           if (collectedRelics === RELIC_COUNT) {
             canHunt = true;
-            setStatus('All relics collected. Hunt the creatures.');
-          } else {
+            setStatus('All relics collected. Hunt the first 4 creatures. Avoid the Eater.');
+          } else if (relic.slotIndex !== 0 && relic.slotIndex !== 1 && relic.slotIndex !== 2) {
             setStatus(`Relic found (${collectedRelics}/${RELIC_COUNT}).`);
           }
         }
@@ -714,16 +1169,49 @@
     }
 
     function update(dt) {
+      const interactNow = interactPressed;
+      interactPressed = false;
+
+      if (inBasement) {
+        moveBasementPlayer(dt);
+        updateCellarRelicPickup();
+        const stairsTouch =
+          distance(basement.playerX, basement.playerY, basement.stairsX, basement.stairsY) <=
+          PLAYER_RADIUS + basement.stairsR;
+        if (stairsTouch) leaveBasement();
+        updateHud();
+        return;
+      }
+
       elapsed += dt;
       movePlayer(dt);
+      if (eaterTakeoverActive) {
+        updateYellowDudes(dt);
+        updateFog();
+        updateCamera();
+        updateHud();
+        return;
+      }
+
+      if (
+        interactNow &&
+        distance(player.x, player.y, hiddenPassage.x, hiddenPassage.y) <= PLAYER_RADIUS + hiddenPassage.r
+      ) {
+        enterBasement();
+        return;
+      }
       updateRelics(dt);
+      if (!eaterSpawned && elapsed >= 60 && !gameEnded && !cellarEndgameActive) {
+        spawnEater();
+      }
+
       updateCreatures(dt);
       updateFog();
       updateCamera();
       updateHud();
 
-      const alive = creatures.filter(c => c.alive).length;
-      if (canHunt && alive === 0 && !gameEnded) {
+      const aliveKillable = creatures.filter(c => c.alive && !c.invincible).length;
+      if (canHunt && aliveKillable === 0 && !gameEnded) {
         endGame(`You survived and cleared the woods in ${elapsed.toFixed(1)}s.`, true);
       }
     }
@@ -784,6 +1272,22 @@
         ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
         ctx.fill();
       }
+
+      // Overworld cellar entrance marker (hidden passage location).
+      if (cellarTextureReady && textures.cellar) {
+        const size = hiddenPassage.r * 2.8;
+        ctx.save();
+        ctx.translate(hiddenPassage.x, hiddenPassage.y);
+        ctx.globalAlpha = 0.9;
+        ctx.drawImage(textures.cellar, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else {
+        ctx.strokeStyle = 'rgba(20, 20, 20, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(hiddenPassage.x, hiddenPassage.y, hiddenPassage.r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     function drawRelics() {
@@ -839,6 +1343,12 @@
           ctx.translate(c.x, c.y);
           ctx.drawImage(textures.shifter, -size / 2, -size / 2, size, size);
           ctx.restore();
+        } else if (c.name === 'Eater' && eaterTextureReady && textures.eater) {
+          const size = CREATURE_RADIUS * 2.8;
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          ctx.drawImage(textures.eater, -size / 2, -size / 2, size, size);
+          ctx.restore();
         } else {
           ctx.fillStyle = c.color;
           ctx.beginPath();
@@ -854,8 +1364,29 @@
       }
     }
 
+    function drawYellowDudes() {
+      if (!yellowDudes.length) return;
+      for (const d of yellowDudes) {
+        if (playerTextureReady && textures.player) {
+          const size = YELLOW_DUDE_RADIUS * 2.7;
+          ctx.drawImage(textures.player, d.x - size / 2, d.y - size / 2, size, size);
+        } else {
+          ctx.fillStyle = '#f4d64c';
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, YELLOW_DUDE_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
     function drawPlayer() {
-      if (playerTextureReady && textures.player) {
+      if (eaterTakeoverActive && eaterTextureReady && textures.eater) {
+        const size = PLAYER_RADIUS * 2.95;
+        ctx.save();
+        ctx.translate(player.x, player.y);
+        ctx.drawImage(textures.eater, -size / 2, -size / 2, size, size);
+        ctx.restore();
+      } else if (playerTextureReady && textures.player) {
         const size = PLAYER_RADIUS * 2.7;
         ctx.save();
         ctx.translate(player.x, player.y);
@@ -887,17 +1418,152 @@
       ctx.fillRect(0, 0, W, H);
     }
 
+    function drawRelicCompassArrows() {
+      if (!relicCompassUnlocked) return;
+      const targets = relics.filter(r => !r.collected && r.slotIndex !== 2);
+      if (!targets.length) return;
+
+      const margin = 34;
+      const halfW = W / 2;
+      const halfH = H / 2;
+      const maxX = halfW - margin;
+      const maxY = halfH - margin;
+
+      ctx.save();
+      for (const relic of targets) {
+        const sx = (relic.x - camera.x) * CAMERA_ZOOM;
+        const sy = (relic.y - camera.y) * CAMERA_ZOOM;
+        const onScreen = sx > margin && sx < W - margin && sy > margin && sy < H - margin;
+        if (onScreen) {
+          ctx.strokeStyle = 'rgba(255, 228, 92, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 13, 0, Math.PI * 2);
+          ctx.stroke();
+          continue;
+        }
+
+        const vx = sx - halfW;
+        const vy = sy - halfH;
+        const mag = Math.hypot(vx, vy) || 1;
+        const nx = vx / mag;
+        const ny = vy / mag;
+        const kx = Math.abs(nx) > 0.0001 ? maxX / Math.abs(nx) : Infinity;
+        const ky = Math.abs(ny) > 0.0001 ? maxY / Math.abs(ny) : Infinity;
+        const k = Math.min(kx, ky);
+        const ax = halfW + nx * k;
+        const ay = halfH + ny * k;
+        const ang = Math.atan2(ny, nx);
+
+        ctx.translate(ax, ay);
+        ctx.rotate(ang);
+        ctx.fillStyle = 'rgba(255, 228, 92, 0.95)';
+        ctx.beginPath();
+        ctx.moveTo(13, 0);
+        ctx.lineTo(-9, -7);
+        ctx.lineTo(-5, 0);
+        ctx.lineTo(-9, 7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+      ctx.restore();
+    }
+
+    function drawBasementScene() {
+      ctx.fillStyle = '#040404';
+      ctx.fillRect(0, 0, W, H);
+
+      const roomX = (W - BASEMENT_W) / 2;
+      const roomY = (H - BASEMENT_H) / 2;
+      ctx.save();
+      ctx.translate(roomX, roomY);
+
+      ctx.fillStyle = '#020202';
+      ctx.fillRect(0, 0, BASEMENT_W, BASEMENT_H);
+      if (basementFloorPattern) {
+        ctx.globalAlpha = basementFloorTextureReady ? 0.5 : 0.32;
+        ctx.fillStyle = basementFloorPattern;
+        ctx.fillRect(0, 0, BASEMENT_W, BASEMENT_H);
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(0, 0, BASEMENT_W, 90);
+
+      if (stairsTextureReady && textures.stairs) {
+        const stairSize = 120;
+        ctx.drawImage(
+          textures.stairs,
+          basement.stairsX - stairSize / 2,
+          basement.stairsY - stairSize / 2,
+          stairSize,
+          stairSize
+        );
+      } else {
+        ctx.fillStyle = '#5b5b5b';
+        ctx.beginPath();
+        ctx.arc(basement.stairsX, basement.stairsY, basement.stairsR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (!cellarRelic.collected) {
+        if (cellarRelicTextureReady && textures.cellarRelic) {
+          const maxSize = cellarRelic.r * 2.8;
+          const iw = Math.max(1, textures.cellarRelic.width);
+          const ih = Math.max(1, textures.cellarRelic.height);
+          const scale = maxSize / Math.max(iw, ih);
+          const drawW = iw * scale;
+          const drawH = ih * scale;
+          ctx.drawImage(
+            textures.cellarRelic,
+            cellarRelic.x - drawW / 2,
+            cellarRelic.y - drawH / 2,
+            drawW,
+            drawH
+          );
+        } else {
+          ctx.fillStyle = '#f5e26d';
+          ctx.beginPath();
+          ctx.arc(cellarRelic.x, cellarRelic.y, cellarRelic.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      if (playerTextureReady && textures.player) {
+        const size = PLAYER_RADIUS * 2.7;
+        ctx.drawImage(textures.player, basement.playerX - size / 2, basement.playerY - size / 2, size, size);
+      } else {
+        ctx.fillStyle = '#f4d64c';
+        ctx.beginPath();
+        ctx.arc(basement.playerX, basement.playerY, PLAYER_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = 'rgba(180,180,180,0.24)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(0, 0, BASEMENT_W, BASEMENT_H);
+      ctx.restore();
+    }
+
     function render() {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, W, H);
+      if (inBasement) {
+        drawBasementScene();
+        drawVignette();
+        return;
+      }
       ctx.save();
       ctx.scale(CAMERA_ZOOM, CAMERA_ZOOM);
       ctx.translate(-camera.x, -camera.y);
       drawBackground();
       drawRelics();
       drawCreatures();
+      drawYellowDudes();
       drawPlayer();
       ctx.restore();
+      drawRelicCompassArrows();
       drawVignette();
     }
 
@@ -915,7 +1581,8 @@
 
     window.addEventListener('keydown', (e) => {
       keys[e.key] = true;
-      if (e.key.startsWith('Arrow')) e.preventDefault();
+      if (e.key.startsWith('Arrow') || e.code === 'Space' || e.key === ' ') e.preventDefault();
+      if (e.code === 'Space' || e.key === ' ') interactPressed = true;
     });
 
     window.addEventListener('keyup', (e) => {
