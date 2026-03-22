@@ -255,6 +255,7 @@
     let yellowDudes = [];
     let eatenYellowDudes = 0;
     let inBasement = false;
+    let basementCooldown = 0;
     let interactPressed = false;
     let canHunt = false;
     let gameEnded = false;
@@ -438,6 +439,7 @@
       yellowDudes = [];
       eatenYellowDudes = 0;
       inBasement = false;
+      basementCooldown = 0;
       interactPressed = false;
       cellarRelic = { x: BASEMENT_W / 2, y: BASEMENT_H / 2, r: 22, collected: false };
       canHunt = false;
@@ -801,6 +803,7 @@
 
     function leaveBasement() {
       inBasement = false;
+      basementCooldown = 2;
       player.x = clamp(hiddenPassage.x + rand(-90, 90), PLAYER_RADIUS, WORLD_W - PLAYER_RADIUS);
       player.y = clamp(hiddenPassage.y + rand(80, 130), PLAYER_RADIUS, WORLD_H - PLAYER_RADIUS);
       resolveTreeCollision(player, PLAYER_RADIUS);
@@ -1193,7 +1196,9 @@
         return;
       }
 
+      if (basementCooldown > 0) basementCooldown -= dt;
       if (
+        basementCooldown <= 0 &&
         distance(player.x, player.y, hiddenPassage.x, hiddenPassage.y) <= PLAYER_RADIUS + hiddenPassage.r
       ) {
         enterBasement();
